@@ -1,0 +1,16 @@
+# Test-account canary: same strategy, tiny size, to validate the real order flow (limit -> fill/cancel -> market) end to end.
+strategy:
+  name: v1_momentum_rotation
+  params:
+    gross_cap: 0.03
+universe:
+  size: 25
+  history_days: 60
+  max_spread_bps: 10.0
+  exclude: [PAXG, USDC, USDT, FDUSD, TUSD, DAI, WBTC]
+execution:
+  limit_timeout_sec: 60
+  poll_interval_sec: 10
+  min_trade_usd: 50.0
+activity:
+  enabled: false

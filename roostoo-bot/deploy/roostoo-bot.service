@@ -1,0 +1,17 @@
+# Optional systemd unit (survives reboots). Install:
+#   sudo cp deploy/roostoo-bot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now roostoo-bot && journalctl -u roostoo-bot -f
+[Unit]
+Description=Roostoo autonomous trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ssm-user
+WorkingDirectory=/home/ssm-user/roostoo-bot
+ExecStart=/home/ssm-user/roostoo-bot/.venv/bin/python -m bot.main --live
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

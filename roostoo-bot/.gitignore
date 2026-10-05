@@ -1,0 +1,10 @@
+.env
+*.pyc
+__pycache__/
+.venv/
+.pytest_cache/
+logs/*
+!logs/.gitkeep
+state/
+data_cache/
+*.sqlite3

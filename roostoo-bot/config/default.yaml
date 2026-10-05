@@ -1,0 +1,47 @@
+# All tunable parameters. Every change to this file is a git commit (competition rule: traceable strategy changes).
+
+strategy:
+  name: v1_momentum_rotation        # a module in strategies/ (all versions are kept there)
+  params:
+    lookback_hours: 336             # 14-day momentum window
+    top_k: 3                        # number of equal-weight positions
+    hysteresis: 2                   # keep a holding while its rank <= top_k + hysteresis and its return is > 0
+    gate_fast_hours: 168            # BTC regime gate: EMA(168h) > EMA(672h)  => risk-on
+    gate_slow_hours: 672
+    rebalance_hour_utc: 0           # decide on the close of the 23:00 UTC bar, i.e. at 00:00 UTC
+    max_weight_multiple: 1.6        # trim a winner that grows above 1.6x its target weight
+    gross_cap: 0.98                 # never invest more than 98% of equity (fee and rounding cushion)
+
+universe:
+  size: 25                          # top-N Roostoo coins by 30d median Binance dollar volume
+  history_days: 60                  # a coin needs >= 60 days of history
+  max_spread_bps: 10.0              # excludes coins whose Roostoo bid/ask spread is wider (PEPE, SHIB, BONK ...)
+  exclude: [PAXG, USDC, USDT, FDUSD, TUSD, DAI, WBTC]
+
+execution:
+  use_limit_orders: true            # maker (0.05%) first, taker (0.1%) fallback
+  limit_timeout_sec: 150            # entries: cancel unfilled limit orders after this, then market (subject to the chase cap)
+  exit_timeout_sec: 60              # exits/sells: shorter patience before going to market
+  poll_interval_sec: 15
+  min_trade_usd: 150.0              # ignore rebalance trades smaller than this (exits only need MiniOrder)
+  cash_buffer: 0.004                # keep 0.4% cash for fees / rounding
+  entry_chase_cap: 0.015            # do not market-chase an entry that has moved > 1.5% away from the decision price
+  max_calls_per_minute: 20          # hard client-side API budget (organisers' limit is 30)
+
+risk:
+  kill_switch_drawdown: 0.22        # drawdown from peak equity at which the bot goes to cash and pauses
+  kill_switch_pause_hours: 24
+  max_price_deviation_bps: 300      # Roostoo vs Binance sanity check before an entry
+  max_data_age_hours: 3             # refuse to decide on stale bars
+  api_error_pause_sec: 300
+
+activity:
+  enabled: true                     # compliance: at least one filled order per UTC day
+  deadline_hour_utc: 20
+  probe_usd_fraction: 0.003         # size of the maintenance trade when nothing else traded (0.3% of equity)
+
+runtime:
+  loop_seconds: 60
+  bar_close_delay_sec: 75           # wait this long after the hour for Binance to publish the closed bar
+  state_dir: state
+  log_dir: logs
