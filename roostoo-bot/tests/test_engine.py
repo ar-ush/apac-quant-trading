@@ -146,3 +146,66 @@ def test_activity_rule_makes_one_small_trade_when_nothing_else_filled(tmp_path):
     cl.now = ms(2026, 10, 7, 21, 30)
     bot.tick()
     assert [p[1] for p in cl.placed if p[0] == "BTC/USD"] == ["BUY", "SELL"]
+
+
+# ---------------------------------------------------------------- regression tests from the pre-deploy audit (2026-10-06)
+def test_probe_restarts_after_a_rebalance_sold_the_probe_btc(tmp_path):
+    bot, cl = make_bot(tmp_path, ms(2026, 10, 6, 21, 30), trend=-0.0008)
+    bot.tick()
+    assert bot.state.probe_qty > 0
+    cl.wallet["BTC"]["Free"] = 0.0                                # a normal rebalance sold it
+    cl.now = ms(2026, 10, 7, 21, 30)
+    bot.tick()
+    assert [p[1] for p in cl.placed if p[0] == "BTC/USD"] == ["BUY", "BUY"]   # the probe is alive again
+    assert bot.state.probe_qty > 0
+
+
+def test_missing_quote_does_not_trip_the_kill_switch(tmp_path):
+    bot, cl = make_bot(tmp_path, ms(2026, 10, 6, 0, 2))
+    bot.tick()
+    n = len(cl.placed)
+    del cl.prices["ETH"]                                          # ticker silently omits a held coin
+    cl.now += 5 * 60_000
+    bot.tick()
+    assert bot.state.halted_until_ms == 0 and len(cl.placed) == n
+
+
+def test_empty_ticker_skips_the_tick(tmp_path):
+    import pytest
+    from bot.execution.client import RoostooError
+    bot, cl = make_bot(tmp_path, ms(2026, 10, 6, 0, 2))
+    cl.ticker = lambda pair=None: {}
+    with pytest.raises(RoostooError):
+        bot.tick()
+    assert cl.placed == []
+
+
+def test_missed_midnight_rebalance_is_caught_up(tmp_path):
+    bot, cl = make_bot(tmp_path, ms(2026, 10, 6, 5, 2))
+    bot.state.started, bot.state.last_rebal_day = True, "2026-10-05"   # the 00:00 bar of Oct 6 never ran
+    bot.state.last_bar_id = (ms(2026, 10, 6, 4, 2) // H)
+    bot.tick()
+    assert {p[0] for p in cl.placed if p[1] == "BUY"} == {"ETH/USD", "SOL/USD", "ADA/USD"}
+    assert bot.state.last_rebal_day == "2026-10-06"
+    n = len(cl.placed)
+    cl.now = ms(2026, 10, 6, 9, 2)
+    bot.tick()
+    assert len(cl.placed) == n                                    # caught up once, not every hour
+
+
+def test_held_coin_with_no_data_is_not_sold_as_a_ranking_exit(tmp_path):
+    bot, cl = make_bot(tmp_path, ms(2026, 10, 6, 0, 2))
+    bot.tick()
+    orig = bot.binance.hourly_closes
+    bot.binance.hourly_closes = lambda coins, need, now_ms=None: orig(coins, need, now_ms).drop(columns=["ETH"])
+    cl.now = ms(2026, 10, 7, 0, 2)
+    bot.tick()
+    assert not [p for p in cl.placed if p[0] == "ETH/USD" and p[1] == "SELL"]
+
+
+def test_activity_guard_uses_a_rolling_18h_window(tmp_path):
+    bot, cl = make_bot(tmp_path, ms(2026, 10, 6, 0, 2))
+    bot.tick()                                                    # strategy fills at 00:02
+    cl.now = ms(2026, 10, 6, 20, 5)                               # 20h later, no fill since: probe is due even though same UTC day
+    bot.tick()
+    assert [p for p in cl.placed if p[0] == "BTC/USD"]
