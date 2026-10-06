@@ -43,11 +43,13 @@ class Order:
     fee: float = 0.0
     fee_coin: str = ""
     error: str = ""
+    raw: Dict[str, Any] = field(default_factory=dict)   # last raw API response, journaled for trade-log integrity
 
     def apply(self, d: Dict[str, Any]) -> None:
         """Absorb an OrderDetail. Live quirk (seen 2026-10-05): a RESTING limit order reports FilledQuantity == Quantity while
         Status is still PENDING (CoinChange 0), and a cancelled one keeps that bogus value. So the fill size is trusted only
         when Status is FILLED, otherwise CoinChange (the coin amount actually exchanged) is used."""
+        self.raw = d
         self.order_id = d.get("OrderID", self.order_id)
         self.status = str(d.get("Status") or self.status).upper()
         self.role = str(d.get("Role") or self.role)
@@ -68,7 +70,7 @@ class Order:
         return dict(pair=self.pair, side=self.side, type=self.otype, order_id=self.order_id, status=self.status,
                     role=self.role, qty=fmt(self.qty), limit_price=fmt(self.price) if self.price is not None else "",
                     ref_price=self.ref_price, filled=self.filled, avg_price=self.avg_price, fee=self.fee,
-                    fee_coin=self.fee_coin, reason=self.reason, error=self.error)
+                    fee_coin=self.fee_coin, reason=self.reason, error=self.error, response=self.raw)
 
 
 class Executor:
