@@ -36,6 +36,8 @@ class Bot:
         self.executor: Optional[Executor] = None
         self.last_equity_log = 0.0
         self.pause_orders_until = 0.0
+        self.last_px: Dict[str, float] = {}        # last good bid per coin: a missing quote must not look like a loss
+        self.last_clock_sync = 0                   # hour index of the last server-clock sync
 
     # ------------------------------------------------------------------ setup
     def startup(self) -> None:
@@ -51,22 +53,41 @@ class Bot:
     def snapshot_account(self) -> Tuple[Dict, Dict, float, Dict[str, float]]:
         wallet = self.client.balance()
         quotes = self.client.ticker()
+        if not wallet or "USD" not in wallet or not quotes:
+            raise RoostooError("incomplete account snapshot (no USD balance or empty ticker); skipping tick")
+        for pair, q in quotes.items():                 # remember the last good bid of every coin (incl. ones bought this bar)
+            if q and q.get("MaxBid") and float(q["MaxBid"]) > 0:
+                self.last_px[pair.split("/")[0]] = float(q["MaxBid"])
         usd = float(wallet.get("USD", {}).get("Free", 0)) + float(wallet.get("USD", {}).get("Lock", 0))
         equity, values = usd, {}
         for coin, w in wallet.items():
             if coin == "USD":
                 continue
             qty = float(w.get("Free", 0)) + float(w.get("Lock", 0))
+            if qty <= 0:
+                continue
             q = quotes.get(f"{coin}/USD")
-            if qty > 0 and q:
-                v = qty * float(q["MaxBid"])
-                values[coin] = v
-                equity += v
+            bid = float(q["MaxBid"]) if q and q.get("MaxBid") else 0.0
+            if bid > 0:
+                self.last_px[coin] = bid
+            elif self.last_px.get(coin):
+                bid = self.last_px[coin]       # quote missing this tick: value at the last good bid, never at zero
+                log.warning("no live quote for %s, valuing at last bid %s", coin, bid)
+            else:
+                continue                       # never quoted since start (halted/delisted dust): cannot value it
+            v = qty * bid
+            values[coin] = v
+            equity += v
+        # the probe position can be sold by a normal rebalance: never remember more BTC than the wallet really holds
+        btc = wallet.get("BTC", {})
+        btc_qty = float(btc.get("Free", 0)) + float(btc.get("Lock", 0))
+        if self.state.probe_qty > btc_qty:
+            self.state.probe_qty = max(0.0, btc_qty)
         # weights used by the strategy exclude the daily-activity probe position and dust
         held = {}
         for coin, v in values.items():
             r = self.rules.get(f"{coin}/USD")
-            probe_v = self.state.probe_qty * float(quotes[f"{coin}/USD"]["MaxBid"]) if coin == "BTC" else 0.0
+            probe_v = self.state.probe_qty * self.last_px.get("BTC", 0.0) if coin == "BTC" else 0.0
             net = v - probe_v
             if r and net >= max(r.min_order_value, 0.002 * equity):
                 held[coin] = net / equity
@@ -102,6 +123,13 @@ class Bot:
 
     # ------------------------------------------------------------------ one tick
     def tick(self) -> None:
+        hour_idx = int(time.time() // 3600)
+        if hour_idx != self.last_clock_sync:       # signed timestamps must stay inside the server's tolerance window
+            self.last_clock_sync = hour_idx
+            try:
+                self.client.sync_clock()
+            except Exception as exc:
+                log.warning("clock resync failed: %s", exc)
         now_ms = self.client.now_ms()
         wallet, quotes, equity, held = self.snapshot_account()
         self._log_equity(now_ms, equity, wallet, quotes)
@@ -157,9 +185,23 @@ class Bot:
             if age_h > self.cfg.risk.max_data_age_hours:
                 self.journal.event(dict(type="stale_data", age_hours=age_h))
             return False
-        snap = Snapshot(now=pd.Timestamp(bar_id * H_MS, unit="ms", tz="UTC"), closes=closes, pool=list(self.state.pool),
-                        held=held, force_rebalance=(not self.state.started and not held))
+        now_bar = pd.Timestamp(bar_id * H_MS, unit="ms", tz="UTC")
+        today = now_bar.strftime("%Y-%m-%d")
+        rebal_hour = self.strategy.params.get("rebalance_hour_utc", 0)
+        missed = bool(self.state.last_rebal_day) and self.state.last_rebal_day != today and now_bar.hour > rebal_hour
+        snap = Snapshot(now=now_bar, closes=closes, pool=list(self.state.pool),
+                        held=held, force_rebalance=((not self.state.started and not held) or missed))
+        if missed:
+            log.warning("rebalance of %s was missed (outage?): catching up at %s", self.state.last_rebal_day, now_bar)
         dec = self.strategy.decide(snap)
+        # a held coin with no data this hour must not be sold as if it had fallen out of the ranking
+        bad = [c for c in held if c in self.state.pool and (c not in closes.columns or pd.isna(closes[c].iloc[-1]))]
+        if bad and dec.targets is not None and dec.info.get("gate_on") == 1.0 and any(c not in dec.targets for c in bad):
+            log.warning("no price data for held %s; postponing the decision rather than selling blind", bad)
+            self.journal.event(dict(type="decision_postponed_missing_data", coins=bad))
+            return False
+        if now_bar.hour == rebal_hour or snap.force_rebalance:
+            self.state.last_rebal_day = today
         self.journal.decision(dict(bar=str(snap.now), targets=dec.targets, reasons=dec.reasons, info=dec.info,
                                    held=held, equity=equity, force=snap.force_rebalance))
         if dec.targets is None:
@@ -186,6 +228,7 @@ class Bot:
         orders = self.executor.rebalance(targets, reasons, equity, wallet, quotes)
         if any(o.filled > 0 for o in orders):
             self.state.last_fill_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            self.state.last_fill_ms = self.client.now_ms()
         self.store.save(self.state)
 
     # ------------------------------------------------------------------ compliance: >=1 filled order per UTC day
@@ -195,7 +238,8 @@ class Bot:
             return
         now = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
         today = now.strftime("%Y-%m-%d")
-        if now.hour < a.deadline_hour_utc or self.state.last_fill_day == today:
+        # "no fill in the last 18h" (not "no fill this UTC day") so every calendar day, HKT/IST/AEDT included, sees a fill
+        if now.hour < a.deadline_hour_utc or now_ms - self.state.last_fill_ms < 18 * H_MS:
             return
         usd = equity * a.probe_usd_fraction
         if self.state.probe_qty > 0:
@@ -207,6 +251,7 @@ class Bot:
         if order is not None and order.filled > 0:
             self.state.probe_qty = max(0.0, self.state.probe_qty + (order.filled if order.side == "BUY" else -order.filled))
             self.state.last_fill_day = today
+            self.state.last_fill_ms = now_ms
             self.journal.event(dict(type="activity_probe", side=order.side, filled=order.filled, probe_qty=self.state.probe_qty))
 
     # ------------------------------------------------------------------ logging

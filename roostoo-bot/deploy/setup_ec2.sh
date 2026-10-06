@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-shot setup for the organisers' EC2 box (Amazon Linux 2023, Session Manager shell, no SSH).
-#   git clone <this repo> && cd <repo> && bash deploy/setup_ec2.sh
+#   git clone <this repo> && cd <repo>/roostoo-bot && bash deploy/setup_ec2.sh
 # Then: cp .env.example .env && nano .env  (competition keys)  and start with deploy/run_bot.sh inside tmux.
 set -euo pipefail
 

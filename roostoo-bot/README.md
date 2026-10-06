@@ -43,7 +43,7 @@ Roostoo ticker/balance ──► bot/execution/client.py ─┤
 | config | `config/default.yaml` (every change is a commit) |
 | tests | `tests/` (`python -m pytest tests -q`) |
 
-Tech stack: Python 3.9+, pandas, numpy, requests, PyYAML.
+Tech stack: Python 3.11 (the version installed by `deploy/setup_ec2.sh`), pandas, numpy, requests, PyYAML. The Dockerfile is provided but not used for the live deployment (the bot runs under tmux on the organisers' EC2).
 
 ## 3. Strategy explanation (v1)
 
@@ -77,9 +77,10 @@ Backtest: `python -m backtest.data --since 2023-01-01` then `python -m backtest.
 
 ### Deploy on the organisers' EC2 (Sydney, Session Manager)
 ```bash
-git clone <this-repo> && cd <repo> && bash deploy/setup_ec2.sh
+git clone <this-repo> && cd <repo>/roostoo-bot && bash deploy/setup_ec2.sh   # the bot lives in the roostoo-bot/ subfolder
 cp .env.example .env && nano .env        # ROOSTOO_ACCOUNT=competition + competition keys
-python -m bot.main --check
+python -m bot.main --check               # must print account=competition and equity ~ 100,000
+curl -s -o /dev/null -w "%{http_code}\n" "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=2"   # expect 200
 tmux new -s bot
 bash deploy/run_bot.sh                   # auto-restarts the bot; detach: Ctrl+B then D
 ```

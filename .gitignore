@@ -1,0 +1,11 @@
+# Repo root is the parent folder of roostoo-bot/. Keep private/reference material out of git (competition keys live in hackathon-info/more-info.md).
+hackathon-info/
+extra-repos/
+public-github-repos/
+claude-profile.md
+context.md
+work/
+.env
+**/.env
+__pycache__/
+*.pyc

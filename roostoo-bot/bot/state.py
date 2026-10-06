@@ -14,7 +14,9 @@ class State:
     last_bar_id: Optional[int] = None          # last hourly bar we made a decision on
     halted_until_ms: int = 0                   # kill-switch pause
     last_fill_day: str = ""                    # UTC date (YYYY-MM-DD) of the last filled order
-    probe_qty: float = 0.0                     # BTC held only as the daily-activity maintenance position
+    last_fill_ms: int = 0                      # exchange-clock ms of the last filled order (timezone-proof activity rule)
+    last_rebal_day: str = ""                   # UTC date whose rebalance bar was decided (catch-up if it was missed)
+    probe_qty: float = 0.0                    # BTC held only as the daily-activity maintenance position
     pool: List[str] = field(default_factory=list)
     pool_day: str = ""
     started: bool = False                      # False until the first decision of this deployment

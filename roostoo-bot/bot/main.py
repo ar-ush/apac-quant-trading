@@ -36,7 +36,7 @@ def setup_logging(log_dir: Path) -> None:
     fh.setFormatter(fmt)
     root.addHandler(fh)
     api = logging.getLogger("roostoo.api")
-    ah = RotatingFileHandler(log_dir / "api.log", maxBytes=10_000_000, backupCount=5)
+    ah = RotatingFileHandler(log_dir / "api.log", maxBytes=10_000_000, backupCount=20)
     ah.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
     api.addHandler(ah)
     api.propagate = False  # request/response bodies go to api.log only (never to the console)

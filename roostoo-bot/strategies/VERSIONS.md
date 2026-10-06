@@ -11,7 +11,14 @@ except for bug fixes (noted below). The live version is whatever `strategy.name`
 * **2026-10-05** v1 created after 8 research rounds (`docs/RESEARCH.md`); live-API canary on the test account found and fixed a
   fill-parsing quirk (resting limit orders report FilledQuantity = Quantity while PENDING).
 
-## Ideas queue (not yet built)
-* v2: a short sleeve when the gate is off (Roostoo `/v6` shorts, 0.1% open + 0.1% close) — competitors found shorts mostly lose; needs an explicit squeeze filter.
-* v2b: probabilistic regime layer (Bayesian / HMM posterior of "trend regime") replacing the hard EMA gate.
-* v2c: rank-weighted sizing (Kelly-style on momentum z-score) inside the top-3.
+* **2026-10-06** pre-deploy audit: v1 strategy logic and parameters UNCHANGED. Engine/execution fixes only: activity probe
+  could never trade again after a rebalance sold its BTC; a missing ticker quote could trip the kill-switch; a held coin with no
+  Binance data was sold as a ranking exit; a missed 00:00 rebalance was never caught up; activity guard is now a rolling 18h window.
+  Added raw API response to order rows, hourly clock resync, single-instance lock. 30 tests.
+
+## Ideas queue
+* Shadow signal (log only, review after Oct 17): "BTC **or** ETH EMA168>EMA672" gate. Looked slightly better in 2026 only; not traded.
+* ~~short sleeve~~, ~~probabilistic regime layer~~, ~~Monte Carlo/conformal ranking and sizing~~: tested 2026-10-05, none beat v1 (`docs/RESEARCH.md` rounds 9–11). Not to be rebuilt unless new data changes the picture.
+* v2c: rank-weighted sizing inside the top-3 (untested).
+* Execution: measure live maker-fill rate and slippage once v1 trades; tune `entry_timeout_sec`.
+* Possible: tick data (LSE) for a real slippage model — only if live fills disagree with the 0.12% assumption.
